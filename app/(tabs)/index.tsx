@@ -1,5 +1,10 @@
 
+import Icon from '../../components/Icon';
+import { colors, commonStyles } from '../../styles/commonStyles';
 import React, { useState } from 'react';
+import { useAuth } from '../../hooks/useAuth';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import StatCard from '../../components/StatCard';
 import {
   View,
   Text,
@@ -8,15 +13,11 @@ import {
   TouchableOpacity,
   RefreshControl
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, commonStyles } from '../../styles/commonStyles';
-import Icon from '../../components/Icon';
-import StatCard from '../../components/StatCard';
-import { useAuth } from '../../hooks/useAuth';
 import { useSupabasePayments } from '../../hooks/useSupabasePayments';
+import ActionButton from '../../components/ActionButton';
 
-const DashboardScreen: React.FC = () => {
-  const { user } = useAuth();
+const DashboardScreen = () => {
+  const { user, shouldHideDemoData } = useAuth();
   const { getDashboardStats, refreshPayments } = useSupabasePayments();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -28,224 +29,289 @@ const DashboardScreen: React.FC = () => {
     setRefreshing(false);
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'XOF',
-      minimumFractionDigits: 0,
-    }).format(amount);
+  const formatCurrency = (amount: number) => {
+    return `${amount.toLocaleString()} FCFA`;
   };
 
-  const formatPercentage = (percentage: number): string => {
+  const formatPercentage = (percentage: number) => {
     return `${percentage.toFixed(1)}%`;
   };
 
+  // Filter demo data if needed
+  const filteredTopClasses = shouldHideDemoData 
+    ? stats.topClassesRecouvrement.filter(classe => 
+        !['6ème A', '5ème B', '4ème C'].includes(classe.classe)
+      )
+    : stats.topClassesRecouvrement;
+
   return (
-    <SafeAreaView style={commonStyles.container}>
+    <SafeAreaView style={commonStyles.wrapper}>
       <ScrollView
-        style={styles.content}
+        style={styles.container}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
           <View>
             <Text style={styles.greeting}>Bonjour,</Text>
             <Text style={styles.userName}>{user?.name || 'Utilisateur'}</Text>
+            <Text style={styles.role}>{user?.role === 'admin' ? 'Administrateur' : 'Caissier'}</Text>
           </View>
-          <TouchableOpacity style={styles.notificationButton}>
-            <Icon name="bell" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <View style={styles.avatarContainer}>
+            <Icon name="person" size={32} color={colors.primary} />
+          </View>
         </View>
 
-        <View style={styles.statsGrid}>
-          <StatCard
-            title="Aujourd'hui"
-            value={formatCurrency(stats.totalEncaisseAujourdhui)}
-            icon="dollar-sign"
-            color={colors.success}
-          />
-          <StatCard
-            title="Cette semaine"
-            value={formatCurrency(stats.totalEncaisseSemaine)}
-            icon="trending-up"
-            color={colors.primary}
-          />
-          <StatCard
-            title="Ce mois"
-            value={formatCurrency(stats.totalEncaisseMois)}
-            icon="calendar"
-            color={colors.warning}
-          />
-          <StatCard
-            title="Paiements"
-            value={stats.nombrePaiements.toString()}
-            icon="credit-card"
-            color={colors.info}
-          />
+        {/* Quick Stats */}
+        <View style={styles.quickStats}>
+          <Text style={styles.sectionTitle}>Aperçu du jour</Text>
+          <View style={styles.statsGrid}>
+            <StatCard
+              title="Encaissé aujourd'hui"
+              value={formatCurrency(stats.totalEncaisseAujourdhui)}
+              icon="cash"
+              color={colors.success}
+            />
+            <StatCard
+              title="Paiements"
+              value={stats.nombrePaiements.toString()}
+              icon="card"
+              color={colors.primary}
+              subtitle="Total"
+            />
+          </View>
         </View>
 
-        <View style={styles.section}>
+        {/* Weekly & Monthly Stats */}
+        <View style={styles.periodStats}>
+          <Text style={styles.sectionTitle}>Statistiques périodiques</Text>
+          <View style={styles.statsGrid}>
+            <StatCard
+              title="Cette semaine"
+              value={formatCurrency(stats.totalEncaisseSemaine)}
+              icon="calendar"
+              color={colors.accent}
+            />
+            <StatCard
+              title="Ce mois"
+              value={formatCurrency(stats.totalEncaisseMois)}
+              icon="calendar-outline"
+              color={colors.warning}
+            />
+          </View>
+        </View>
+
+        {/* Student Status */}
+        <View style={styles.studentStatus}>
           <Text style={styles.sectionTitle}>Statut des élèves</Text>
           <View style={styles.statusCard}>
-            <View style={styles.statusItem}>
-              <View style={styles.statusIndicator}>
-                <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
-                <Text style={styles.statusLabel}>Élèves soldés</Text>
-              </View>
-              <Text style={styles.statusValue}>
-                {formatPercentage(stats.pourcentageElevesSoldes)}
-              </Text>
+            <View style={styles.statusHeader}>
+              <Icon name="school" size={24} color={colors.primary} />
+              <Text style={styles.statusTitle}>Élèves soldés</Text>
             </View>
-            <View style={styles.statusItem}>
-              <View style={styles.statusIndicator}>
-                <View style={[styles.statusDot, { backgroundColor: colors.error }]} />
-                <Text style={styles.statusLabel}>Élèves non soldés</Text>
-              </View>
-              <Text style={styles.statusValue}>
-                {formatPercentage(100 - stats.pourcentageElevesSoldes)}
-              </Text>
+            <Text style={styles.statusPercentage}>
+              {formatPercentage(stats.pourcentageElevesSoldes)}
+            </Text>
+            <View style={styles.progressBar}>
+              <View 
+                style={[
+                  styles.progressFill, 
+                  { width: `${Math.min(stats.pourcentageElevesSoldes, 100)}%` }
+                ]} 
+              />
             </View>
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Top classes par recouvrement</Text>
-          {stats.topClassesRecouvrement.map((classe, index) => (
-            <View key={classe.classe} style={styles.classItem}>
-              <View style={styles.classRank}>
-                <Text style={styles.rankNumber}>{index + 1}</Text>
-              </View>
-              <View style={styles.classInfo}>
-                <Text style={styles.className}>{classe.classe}</Text>
-                <Text style={styles.classAmount}>
-                  {formatCurrency(classe.montant)}
-                </Text>
-              </View>
-              <View style={styles.classPercentage}>
-                <Text style={styles.percentageText}>
-                  {formatPercentage(classe.pourcentage)}
-                </Text>
-                <View style={styles.progressBar}>
-                  <View 
-                    style={[
-                      styles.progressFill, 
-                      { width: `${Math.min(classe.pourcentage, 100)}%` }
-                    ]} 
-                  />
+        {/* Top Classes */}
+        {filteredTopClasses.length > 0 && (
+          <View style={styles.topClasses}>
+            <Text style={styles.sectionTitle}>Top classes (recouvrement)</Text>
+            {filteredTopClasses.slice(0, 5).map((classe, index) => (
+              <View key={classe.classe} style={styles.classItem}>
+                <View style={styles.classRank}>
+                  <Text style={styles.rankNumber}>{index + 1}</Text>
+                </View>
+                <View style={styles.classInfo}>
+                  <Text style={styles.className}>{classe.classe}</Text>
+                  <Text style={styles.classAmount}>{formatCurrency(classe.montant)}</Text>
+                </View>
+                <View style={styles.classPercentage}>
+                  <Text style={styles.percentageText}>{formatPercentage(classe.pourcentage)}</Text>
                 </View>
               </View>
-            </View>
-          ))}
-        </View>
+            ))}
+          </View>
+        )}
 
+        {/* Quick Actions */}
         <View style={styles.quickActions}>
           <Text style={styles.sectionTitle}>Actions rapides</Text>
           <View style={styles.actionsGrid}>
-            <TouchableOpacity style={styles.actionButton}>
-              <Icon name="user-plus" size={24} color={colors.primary} />
-              <Text style={styles.actionText}>Ajouter élève</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton}>
-              <Icon name="credit-card" size={24} color={colors.success} />
-              <Text style={styles.actionText}>Nouveau paiement</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton}>
-              <Icon name="dollar-sign" size={24} color={colors.warning} />
-              <Text style={styles.actionText}>Gérer frais</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton}>
-              <Icon name="file-text" size={24} color={colors.info} />
-              <Text style={styles.actionText}>Rapports</Text>
-            </TouchableOpacity>
+            <ActionButton
+              title="Nouveau paiement"
+              icon="card"
+              onPress={() => {
+                // Navigate to payments with add modal
+                console.log('Navigate to add payment');
+              }}
+              style={styles.actionButton}
+            />
+            <ActionButton
+              title="Ajouter élève"
+              icon="person-add"
+              variant="secondary"
+              onPress={() => {
+                // Navigate to students with add modal
+                console.log('Navigate to add student');
+              }}
+              style={styles.actionButton}
+            />
+          </View>
+          <View style={styles.actionsGrid}>
+            <ActionButton
+              title="Voir rapports"
+              icon="document-text"
+              variant="secondary"
+              onPress={() => {
+                // Navigate to reports
+                console.log('Navigate to reports');
+              }}
+              style={styles.actionButton}
+            />
+            <ActionButton
+              title="Exporter données"
+              icon="download"
+              variant="secondary"
+              onPress={() => {
+                // Show export options
+                console.log('Show export options');
+              }}
+              style={styles.actionButton}
+            />
           </View>
         </View>
+
+        {/* Demo Account Warning */}
+        {user && ['admin', 'caissier1'].includes(user.username) && (
+          <View style={styles.demoWarning}>
+            <Icon name="warning" size={20} color={colors.warning} />
+            <Text style={styles.demoWarningText}>
+              Vous utilisez un compte de démonstration. Les données affichées sont des exemples.
+            </Text>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  content: {
+  container: {
     flex: 1,
-    paddingHorizontal: 20,
+    backgroundColor: colors.background,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 20,
+    padding: 20,
+    backgroundColor: colors.backgroundAlt,
+    marginBottom: 20,
   },
   greeting: {
     fontSize: 16,
-    color: colors.textSecondary,
+    color: colors.grey,
   },
   userName: {
     fontSize: 24,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.text,
-    marginTop: 4,
+    marginBottom: 4,
   },
-  notificationButton: {
-    padding: 8,
+  role: {
+    fontSize: 14,
+    color: colors.primary,
+    fontWeight: '500',
   },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 24,
-    gap: 12,
-  },
-  section: {
-    marginBottom: 24,
+  avatarContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: colors.primary + '20',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: colors.text,
     marginBottom: 16,
+    paddingHorizontal: 20,
+  },
+  quickStats: {
+    marginBottom: 24,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+  },
+  periodStats: {
+    marginBottom: 24,
+  },
+  studentStatus: {
+    marginBottom: 24,
   },
   statusCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.backgroundAlt,
+    marginHorizontal: 20,
+    padding: 20,
     borderRadius: 12,
-    padding: 16,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.grey + '20',
   },
-  statusItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  statusIndicator: {
+  statusHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 12,
   },
-  statusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 8,
-  },
-  statusLabel: {
-    fontSize: 14,
-    color: colors.text,
-  },
-  statusValue: {
+  statusTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: colors.text,
+    marginLeft: 12,
+  },
+  statusPercentage: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: colors.success,
+    marginBottom: 12,
+  },
+  progressBar: {
+    height: 8,
+    backgroundColor: colors.grey + '30',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: colors.success,
+    borderRadius: 4,
+  },
+  topClasses: {
+    marginBottom: 24,
   },
   classItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: colors.backgroundAlt,
+    marginHorizontal: 20,
     marginBottom: 8,
+    padding: 16,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.grey + '20',
   },
   classRank: {
     width: 32,
@@ -254,70 +320,63 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 16,
   },
   rankNumber: {
     fontSize: 14,
-    fontWeight: '600',
-    color: colors.surface,
+    fontWeight: '700',
+    color: 'white',
   },
   classInfo: {
     flex: 1,
   },
   className: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
     color: colors.text,
+    marginBottom: 4,
   },
   classAmount: {
     fontSize: 14,
-    color: colors.textSecondary,
-    marginTop: 2,
+    color: colors.grey,
   },
   classPercentage: {
     alignItems: 'flex-end',
-    minWidth: 80,
   },
   percentageText: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
     color: colors.success,
-    marginBottom: 4,
-  },
-  progressBar: {
-    width: 60,
-    height: 4,
-    backgroundColor: colors.border,
-    borderRadius: 2,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.success,
-    borderRadius: 2,
   },
   quickActions: {
     marginBottom: 24,
   },
   actionsGrid: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
+    paddingHorizontal: 20,
+    marginBottom: 12,
   },
   actionButton: {
     flex: 1,
-    minWidth: '45%',
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    marginHorizontal: 4,
   },
-  actionText: {
-    fontSize: 12,
+  demoWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.warning + '20',
+    marginHorizontal: 20,
+    marginBottom: 20,
+    padding: 16,
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.warning,
+  },
+  demoWarningText: {
+    fontSize: 14,
     color: colors.text,
-    marginTop: 8,
-    textAlign: 'center',
+    marginLeft: 12,
+    flex: 1,
+    lineHeight: 20,
   },
 });
 

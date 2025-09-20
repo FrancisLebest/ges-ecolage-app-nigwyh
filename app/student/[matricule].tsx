@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
+import Icon from '../../components/Icon';
+import { Student, Payment } from '../../types';
 import {
   View,
   Text,
@@ -8,24 +9,23 @@ import {
   TouchableOpacity,
   Alert
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router } from 'expo-router';
 import { colors, commonStyles } from '../../styles/commonStyles';
-import Icon from '../../components/Icon';
-import PaymentCard from '../../components/PaymentCard';
 import AddPaymentModal from '../../components/AddPaymentModal';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSupabaseStudents } from '../../hooks/useSupabaseStudents';
+import React, { useState, useEffect } from 'react';
+import { useLocalSearchParams, router } from 'expo-router';
 import { useSupabasePayments } from '../../hooks/useSupabasePayments';
-import { Student, Payment } from '../../types';
+import PaymentCard from '../../components/PaymentCard';
+import ActionButton from '../../components/ActionButton';
+import { useSupabaseFees } from '../../hooks/useSupabaseFees';
+import { printReceipt, ReceiptData } from '../../utils/pdfGenerator';
 
-const StudentDetailScreen: React.FC = () => {
+const StudentDetailScreen = () => {
   const { matricule } = useLocalSearchParams<{ matricule: string }>();
   const { students } = useSupabaseStudents();
-  const { 
-    addPayment, 
-    getStudentPaymentHistory, 
-    getStudentBalances 
-  } = useSupabasePayments();
+  const { addPayment, getStudentPaymentHistory, getStudentBalances } = useSupabasePayments();
+  const { fees } = useSupabaseFees();
   
   const [student, setStudent] = useState<Student | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -33,173 +33,230 @@ const StudentDetailScreen: React.FC = () => {
   const [showAddPaymentModal, setShowAddPaymentModal] = useState(false);
 
   useEffect(() => {
-    if (matricule) {
+    if (matricule && students.length > 0) {
       const foundStudent = students.find(s => s.matricule === matricule);
       setStudent(foundStudent || null);
       
-      const studentPayments = getStudentPaymentHistory(matricule);
-      setPayments(studentPayments);
-      
-      const balances = getStudentBalances();
-      const studentBalance = balances.find(b => b.matricule === matricule);
-      setBalance(studentBalance || null);
+      if (foundStudent) {
+        const studentPayments = getStudentPaymentHistory(matricule);
+        setPayments(studentPayments);
+        
+        const balances = getStudentBalances();
+        const studentBalance = balances.find(b => b.matricule === matricule);
+        setBalance(studentBalance);
+      }
     }
   }, [matricule, students]);
 
   const handleAddPayment = async (payment: Payment) => {
     try {
       await addPayment(payment);
-      Alert.alert('Succès', 'Paiement enregistré avec succès');
+      setShowAddPaymentModal(false);
       
-      // Refresh payments
-      const updatedPayments = getStudentPaymentHistory(matricule!);
+      // Refresh payments and balance
+      const updatedPayments = getStudentPaymentHistory(matricule);
       setPayments(updatedPayments);
       
-      // Refresh balance
       const balances = getStudentBalances();
       const updatedBalance = balances.find(b => b.matricule === matricule);
-      setBalance(updatedBalance || null);
+      setBalance(updatedBalance);
+      
+      Alert.alert('Succès', 'Paiement enregistré avec succès');
     } catch (error) {
       Alert.alert('Erreur', 'Erreur lors de l\'enregistrement du paiement');
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'XOF',
-      minimumFractionDigits: 0,
-    }).format(amount);
+  const handlePrintReceipt = async (payment: Payment) => {
+    if (!student || !balance) {
+      Alert.alert('Erreur', 'Données manquantes pour générer le reçu');
+      return;
+    }
+
+    const fee = fees.find(f => f.code === payment.codeFrais);
+    if (!fee) {
+      Alert.alert('Erreur', 'Frais non trouvé');
+      return;
+    }
+
+    const receiptData: ReceiptData = {
+      student,
+      payment,
+      fee,
+      balance
+    };
+
+    try {
+      const result = await printReceipt(receiptData);
+      if (result.success) {
+        Alert.alert('Succès', result.message);
+      } else {
+        Alert.alert('Erreur', result.message);
+      }
+    } catch (error) {
+      Alert.alert('Erreur', 'Erreur lors de la génération du reçu');
+    }
   };
 
-  const formatDate = (dateString: string): string => {
+  const formatCurrency = (amount: number) => {
+    return `${amount.toLocaleString()} FCFA`;
+  };
+
+  const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('fr-FR');
   };
 
   if (!student) {
     return (
-      <SafeAreaView style={commonStyles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={commonStyles.wrapper}>
+        <View style={styles.container}>
+          <Text style={styles.errorText}>Élève non trouvé</Text>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Icon name="arrow-left" size={24} color={colors.text} />
+            <Text style={styles.backButtonText}>Retour</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>Élève introuvable</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={commonStyles.container}>
+    <SafeAreaView style={commonStyles.wrapper}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Icon name="arrow-left" size={24} color={colors.text} />
+          <Icon name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>Détail élève</Text>
-        <TouchableOpacity 
-          style={styles.addPaymentButton}
-          onPress={() => setShowAddPaymentModal(true)}
-        >
-          <Icon name="plus" size={24} color={colors.surface} />
+        <Text style={styles.title}>Détails Élève</Text>
+        <TouchableOpacity onPress={() => setShowAddPaymentModal(true)} style={styles.addButton}>
+          <Icon name="add" size={24} color={colors.primary} />
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.content}>
+        {/* Student Info Card */}
         <View style={styles.studentCard}>
           <View style={styles.studentHeader}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {student.nom.charAt(0)}{student.prenom.charAt(0)}
-              </Text>
+            <View style={styles.avatarContainer}>
+              <Icon name="person" size={32} color={colors.primary} />
             </View>
             <View style={styles.studentInfo}>
-              <Text style={styles.studentName}>
-                {student.nom} {student.prenom}
-              </Text>
+              <Text style={styles.studentName}>{student.nom} {student.prenom}</Text>
               <Text style={styles.studentMatricule}>{student.matricule}</Text>
               <Text style={styles.studentClass}>{student.classe}</Text>
             </View>
           </View>
-
+          
           <View style={styles.studentDetails}>
             <View style={styles.detailRow}>
-              <Icon name="calendar" size={16} color={colors.textSecondary} />
-              <Text style={styles.detailText}>
-                Né(e) le {formatDate(student.dateNaissance)}
-              </Text>
+              <Icon name="calendar" size={16} color={colors.grey} />
+              <Text style={styles.detailLabel}>Date de naissance:</Text>
+              <Text style={styles.detailValue}>{formatDate(student.dateNaissance)}</Text>
             </View>
             <View style={styles.detailRow}>
-              <Icon name="phone" size={16} color={colors.textSecondary} />
-              <Text style={styles.detailText}>{student.contactParent}</Text>
+              <Icon name="call" size={16} color={colors.grey} />
+              <Text style={styles.detailLabel}>Contact parent:</Text>
+              <Text style={styles.detailValue}>{student.contactParent}</Text>
             </View>
             {student.emailParent && (
               <View style={styles.detailRow}>
-                <Icon name="mail" size={16} color={colors.textSecondary} />
-                <Text style={styles.detailText}>{student.emailParent}</Text>
+                <Icon name="mail" size={16} color={colors.grey} />
+                <Text style={styles.detailLabel}>Email parent:</Text>
+                <Text style={styles.detailValue}>{student.emailParent}</Text>
               </View>
             )}
             <View style={styles.detailRow}>
-              <Icon name="user-check" size={16} color={colors.textSecondary} />
-              <Text style={styles.detailText}>
-                Inscrit le {formatDate(student.dateInscription)}
-              </Text>
+              <Icon name="school" size={16} color={colors.grey} />
+              <Text style={styles.detailLabel}>Date d'inscription:</Text>
+              <Text style={styles.detailValue}>{formatDate(student.dateInscription)}</Text>
             </View>
           </View>
         </View>
 
+        {/* Balance Card */}
         {balance && (
           <View style={styles.balanceCard}>
-            <Text style={styles.balanceTitle}>Situation financière</Text>
+            <Text style={styles.balanceTitle}>Situation Financière</Text>
             <View style={styles.balanceGrid}>
               <View style={styles.balanceItem}>
                 <Text style={styles.balanceLabel}>Total dû</Text>
-                <Text style={styles.balanceValue}>
-                  {formatCurrency(balance.totalDu)}
-                </Text>
+                <Text style={styles.balanceAmount}>{formatCurrency(balance.totalDu)}</Text>
               </View>
               <View style={styles.balanceItem}>
                 <Text style={styles.balanceLabel}>Total payé</Text>
-                <Text style={[styles.balanceValue, { color: colors.success }]}>
+                <Text style={[styles.balanceAmount, { color: colors.success }]}>
                   {formatCurrency(balance.totalPaye)}
                 </Text>
               </View>
               <View style={styles.balanceItem}>
                 <Text style={styles.balanceLabel}>Reste à payer</Text>
                 <Text style={[
-                  styles.balanceValue, 
-                  { color: balance.resteAPayer > 0 ? colors.error : colors.success }
+                  styles.balanceAmount, 
+                  { color: balance.resteAPayer <= 0 ? colors.success : colors.error }
                 ]}>
                   {formatCurrency(balance.resteAPayer)}
                 </Text>
               </View>
-            </View>
-            <View style={styles.statusBadge}>
-              <View style={[
-                styles.statusIndicator,
-                { backgroundColor: balance.statut === 'solde' ? colors.success : colors.error }
-              ]} />
-              <Text style={styles.statusText}>
-                {balance.statut === 'solde' ? 'Soldé' : 'Non soldé'}
-              </Text>
+              <View style={styles.balanceItem}>
+                <Text style={styles.balanceLabel}>Statut</Text>
+                <View style={[
+                  styles.statusBadge,
+                  { backgroundColor: balance.statut === 'solde' ? colors.success : colors.error }
+                ]}>
+                  <Text style={styles.statusText}>
+                    {balance.statut === 'solde' ? 'SOLDÉ' : 'NON SOLDÉ'}
+                  </Text>
+                </View>
+              </View>
             </View>
           </View>
         )}
 
+        {/* Quick Actions */}
+        <View style={styles.actionsCard}>
+          <Text style={styles.actionsTitle}>Actions rapides</Text>
+          <View style={styles.actionsGrid}>
+            <ActionButton
+              title="Nouveau paiement"
+              icon="card"
+              onPress={() => setShowAddPaymentModal(true)}
+              style={styles.actionButton}
+            />
+            <ActionButton
+              title="Voir les frais"
+              icon="receipt"
+              variant="secondary"
+              onPress={() => {
+                // Navigate to fees with class filter
+                Alert.alert('Info', 'Navigation vers les frais à implémenter');
+              }}
+              style={styles.actionButton}
+            />
+          </View>
+        </View>
+
+        {/* Payment History */}
         <View style={styles.paymentsSection}>
-          <Text style={styles.sectionTitle}>
-            Historique des paiements ({payments.length})
-          </Text>
+          <View style={styles.paymentsSectionHeader}>
+            <Text style={styles.paymentsTitle}>Historique des paiements</Text>
+            <Text style={styles.paymentsCount}>({payments.length})</Text>
+          </View>
           
           {payments.length > 0 ? (
             payments.map((payment) => (
-              <PaymentCard key={payment.id} payment={payment} />
+              <View key={payment.id} style={styles.paymentContainer}>
+                <PaymentCard payment={payment} />
+                <TouchableOpacity
+                  onPress={() => handlePrintReceipt(payment)}
+                  style={styles.receiptButton}
+                >
+                  <Icon name="print" size={20} color={colors.primary} />
+                  <Text style={styles.receiptButtonText}>Reçu</Text>
+                </TouchableOpacity>
+              </View>
             ))
           ) : (
             <View style={styles.emptyPayments}>
-              <Icon name="credit-card" size={48} color={colors.textSecondary} />
-              <Text style={styles.emptyPaymentsText}>
-                Aucun paiement enregistré
-              </Text>
+              <Icon name="card-outline" size={48} color={colors.grey} />
+              <Text style={styles.emptyPaymentsText}>Aucun paiement enregistré</Text>
               <Text style={styles.emptyPaymentsSubtext}>
                 Commencez par enregistrer un paiement
               </Text>
@@ -219,102 +276,106 @@ const StudentDetailScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: colors.backgroundAlt,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: colors.grey + '30',
   },
   backButton: {
-    padding: 4,
+    padding: 8,
   },
   title: {
     fontSize: 18,
     fontWeight: '600',
     color: colors.text,
   },
-  addPaymentButton: {
-    backgroundColor: colors.primary,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
+  addButton: {
+    padding: 8,
   },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
   },
   studentCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.backgroundAlt,
+    margin: 16,
     borderRadius: 12,
     padding: 20,
-    marginVertical: 16,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.grey + '20',
   },
   studentHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  avatar: {
+  avatarContainer: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primary + '20',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
-  },
-  avatarText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.surface,
   },
   studentInfo: {
     flex: 1,
   },
   studentName: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.text,
+    marginBottom: 4,
   },
   studentMatricule: {
-    fontSize: 14,
+    fontSize: 16,
     color: colors.primary,
-    marginTop: 2,
+    fontWeight: '600',
+    marginBottom: 2,
   },
   studentClass: {
     fontSize: 14,
-    color: colors.textSecondary,
-    marginTop: 2,
+    color: colors.grey,
   },
   studentDetails: {
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: colors.grey + '30',
     paddingTop: 16,
   },
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  detailText: {
+  detailLabel: {
+    fontSize: 14,
+    color: colors.grey,
+    marginLeft: 8,
+    flex: 1,
+  },
+  detailValue: {
     fontSize: 14,
     color: colors.text,
-    marginLeft: 8,
+    fontWeight: '500',
   },
   balanceCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.backgroundAlt,
+    marginHorizontal: 16,
+    marginBottom: 16,
     borderRadius: 12,
     padding: 20,
-    marginBottom: 16,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.grey + '20',
   },
   balanceTitle: {
     fontSize: 18,
@@ -324,67 +385,120 @@ const styles = StyleSheet.create({
   },
   balanceGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 16,
   },
   balanceItem: {
-    alignItems: 'center',
+    width: '48%',
+    marginBottom: 16,
   },
   balanceLabel: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.grey,
     marginBottom: 4,
   },
-  balanceValue: {
+  balanceAmount: {
     fontSize: 16,
     fontWeight: '600',
     color: colors.text,
   },
   statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    backgroundColor: colors.background,
-    borderRadius: 20,
-  },
-  statusIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
   },
   statusText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'white',
   },
-  paymentsSection: {
-    marginBottom: 20,
+  actionsCard: {
+    backgroundColor: colors.backgroundAlt,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: colors.grey + '20',
   },
-  sectionTitle: {
+  actionsTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: colors.text,
     marginBottom: 16,
   },
+  actionsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  actionButton: {
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  paymentsSection: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  paymentsSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  paymentsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  paymentsCount: {
+    fontSize: 14,
+    color: colors.grey,
+    marginLeft: 8,
+  },
+  paymentContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  receiptButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: colors.primary + '20',
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  receiptButtonText: {
+    fontSize: 12,
+    color: colors.primary,
+    fontWeight: '500',
+    marginLeft: 4,
+  },
   emptyPayments: {
     alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 40,
   },
   emptyPaymentsText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
     color: colors.text,
-    marginTop: 16,
+    marginTop: 12,
+    marginBottom: 4,
   },
   emptyPaymentsSubtext: {
     fontSize: 14,
-    color: colors.textSecondary,
-    marginTop: 8,
+    color: colors.grey,
     textAlign: 'center',
+  },
+  errorText: {
+    fontSize: 18,
+    color: colors.error,
+    marginBottom: 20,
+  },
+  backButtonText: {
+    fontSize: 16,
+    color: colors.primary,
   },
 });
 

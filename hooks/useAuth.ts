@@ -81,11 +81,30 @@ export const useAuth = () => {
     }
   };
 
+  // Check if current user is a demo account
+  const isDemoAccount = (user: User | null): boolean => {
+    if (!user) return false;
+    
+    // Demo accounts are identified by specific usernames or email patterns
+    const demoUsernames = ['admin', 'caissier1', 'demo', 'test'];
+    const demoEmailPatterns = ['demo@', 'test@', 'example@'];
+    
+    return demoUsernames.includes(user.username.toLowerCase()) ||
+           (user.email && demoEmailPatterns.some(pattern => user.email!.toLowerCase().includes(pattern)));
+  };
+
+  // Filter out demo accounts for regular users
+  const shouldHideDemoData = (): boolean => {
+    return user?.role !== 'admin' && !isDemoAccount(user);
+  };
+
   return {
     user,
     loading,
     login,
     logout,
-    isAuthenticated: !!user
+    isAuthenticated: !!user,
+    isDemoAccount: isDemoAccount(user),
+    shouldHideDemoData: shouldHideDemoData()
   };
 };

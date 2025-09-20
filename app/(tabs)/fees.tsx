@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
+import AddFeeModal from '../../components/AddFeeModal';
+import Icon from '../../components/Icon';
 import {
   View,
   Text,
@@ -9,33 +10,51 @@ import {
   RefreshControl,
   Alert
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, commonStyles } from '../../styles/commonStyles';
-import Icon from '../../components/Icon';
 import SearchBar from '../../components/SearchBar';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect } from 'react';
 import FeeCard from '../../components/FeeCard';
-import AddFeeModal from '../../components/AddFeeModal';
-import SimpleBottomSheet from '../../components/BottomSheet';
 import { useSupabaseFees, Fee } from '../../hooks/useSupabaseFees';
+import SimpleBottomSheet from '../../components/BottomSheet';
+import ActionButton from '../../components/ActionButton';
+import FilterModal, { FilterOptions } from '../../components/FilterModal';
+import BulkActionModal from '../../components/BulkActionModal';
+import { useAuth } from '../../hooks/useAuth';
+import * as XLSX from 'xlsx';
 
-const FeesScreen: React.FC = () => {
+const FeesScreen = () => {
+  const { user, shouldHideDemoData } = useAuth();
   const { fees, loading, addFee, updateFee, deleteFee, refreshFees } = useSupabaseFees();
+  
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilter, setSelectedFilter] = useState<'tous' | 'obligatoires' | 'optionnels'>('tous');
   const [filteredFees, setFilteredFees] = useState<Fee[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showFilterSheet, setShowFilterSheet] = useState(false);
-  const [selectedFilter, setSelectedFilter] = useState<'tous' | 'obligatoires' | 'optionnels'>('tous');
-  const [editingFee, setEditingFee] = useState<Fee | undefined>(undefined);
+  const [editingFee, setEditingFee] = useState<Fee | null>(null);
+  const [showBottomSheet, setShowBottomSheet] = useState(false);
+  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [selectedFees, setSelectedFees] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [currentFilters, setCurrentFilters] = useState<FilterOptions>({});
 
   useEffect(() => {
     filterFees();
-  }, [searchQuery, fees, selectedFilter]);
+  }, [searchQuery, fees, selectedFilter, currentFilters]);
 
   const filterFees = () => {
     let filtered = fees;
 
-    // Filter by search query
+    // Hide demo data if needed
+    if (shouldHideDemoData) {
+      filtered = filtered.filter(fee => 
+        !['SCOL001', 'SCOL002', 'EXAM001', 'TRAN001', 'CANT001', 'UNIF001'].includes(fee.code)
+      );
+    }
+
+    // Apply search query
     if (searchQuery.trim()) {
       const lowercaseQuery = searchQuery.toLowerCase();
       filtered = filtered.filter(fee => 
@@ -45,11 +64,29 @@ const FeesScreen: React.FC = () => {
       );
     }
 
-    // Filter by type
-    if (selectedFilter === 'obligatoires') {
-      filtered = filtered.filter(fee => fee.obligatoire);
-    } else if (selectedFilter === 'optionnels') {
-      filtered = filtered.filter(fee => !fee.obligatoire);
+    // Apply class filter
+    if (currentFilters.classe) {
+      filtered = filtered.filter(fee => fee.classe === currentFilters.classe);
+    }
+
+    // Apply obligatoire filter
+    if (selectedFilter !== 'tous') {
+      filtered = filtered.filter(fee => {
+        if (selectedFilter === 'obligatoires') {
+          return fee.obligatoire;
+        } else if (selectedFilter === 'optionnels') {
+          return !fee.obligatoire;
+        }
+        return true;
+      });
+    }
+
+    // Apply amount filters
+    if (currentFilters.montantMin !== undefined) {
+      filtered = filtered.filter(fee => fee.montant >= currentFilters.montantMin!);
+    }
+    if (currentFilters.montantMax !== undefined) {
+      filtered = filtered.filter(fee => fee.montant <= currentFilters.montantMax!);
     }
 
     setFilteredFees(filtered);
@@ -64,6 +101,7 @@ const FeesScreen: React.FC = () => {
   const handleAddFee = async (fee: Fee) => {
     try {
       await addFee(fee);
+      setShowAddModal(false);
       Alert.alert('Succès', 'Frais ajouté avec succès');
     } catch (error) {
       Alert.alert('Erreur', 'Erreur lors de l\'ajout du frais');
@@ -74,18 +112,18 @@ const FeesScreen: React.FC = () => {
     try {
       if (editingFee) {
         await updateFee(editingFee.code, fee);
+        setEditingFee(null);
         Alert.alert('Succès', 'Frais modifié avec succès');
-        setEditingFee(undefined);
       }
     } catch (error) {
       Alert.alert('Erreur', 'Erreur lors de la modification du frais');
     }
   };
 
-  const handleDeleteFee = (fee: Fee) => {
+  const handleDeleteFee = async (fee: Fee) => {
     Alert.alert(
-      'Confirmer la suppression',
-      `Êtes-vous sûr de vouloir supprimer le frais "${fee.description}" ?`,
+      'Confirmation',
+      `Êtes-vous sûr de vouloir supprimer le frais ${fee.code} ?`,
       [
         { text: 'Annuler', style: 'cancel' },
         {
@@ -104,64 +142,164 @@ const FeesScreen: React.FC = () => {
     );
   };
 
-  const getFilterCount = (filter: 'tous' | 'obligatoires' | 'optionnels'): number => {
-    switch (filter) {
-      case 'obligatoires':
-        return fees.filter(f => f.obligatoire).length;
-      case 'optionnels':
-        return fees.filter(f => !f.obligatoire).length;
-      default:
-        return fees.length;
+  const handleExportFees = async () => {
+    try {
+      const exportData = filteredFees.map(fee => ({
+        'Code': fee.code,
+        'Description': fee.description,
+        'Montant': fee.montant,
+        'Classe': fee.classe || '',
+        'Obligatoire': fee.obligatoire ? 'Oui' : 'Non',
+        'Périodicité': fee.periodicite || ''
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Frais');
+
+      Alert.alert('Succès', 'Export réalisé avec succès');
+    } catch (error) {
+      Alert.alert('Erreur', 'Erreur lors de l\'export');
+    }
+    setShowBottomSheet(false);
+  };
+
+  const toggleFeeSelection = (code: string) => {
+    if (selectedFees.includes(code)) {
+      setSelectedFees(selectedFees.filter(id => id !== code));
+    } else {
+      setSelectedFees([...selectedFees, code]);
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'XOF',
-      minimumFractionDigits: 0,
-    }).format(amount);
+  const toggleSelectionMode = () => {
+    setSelectionMode(!selectionMode);
+    setSelectedFees([]);
   };
 
-  const getTotalAmount = (): number => {
+  const selectAllFees = () => {
+    if (selectedFees.length === filteredFees.length) {
+      setSelectedFees([]);
+    } else {
+      setSelectedFees(filteredFees.map(f => f.code));
+    }
+  };
+
+  const handleBulkDelete = async (codes: string[]) => {
+    for (const code of codes) {
+      await deleteFee(code);
+    }
+    setSelectedFees([]);
+    setSelectionMode(false);
+  };
+
+  const handleBulkExport = async (codes: string[]) => {
+    const feesToExport = filteredFees.filter(f => codes.includes(f.code));
+    const exportData = feesToExport.map(fee => ({
+      'Code': fee.code,
+      'Description': fee.description,
+      'Montant': fee.montant,
+      'Classe': fee.classe || '',
+      'Obligatoire': fee.obligatoire ? 'Oui' : 'Non',
+      'Périodicité': fee.periodicite || ''
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Frais');
+
+    Alert.alert('Succès', `${feesToExport.length} frais exportés`);
+  };
+
+  const applyFilters = (filters: FilterOptions) => {
+    setCurrentFilters(filters);
+  };
+
+  const getFilterCount = (filter: 'tous' | 'obligatoires' | 'optionnels') => {
+    if (filter === 'tous') return filteredFees.length;
+    return filteredFees.filter(fee => {
+      if (filter === 'obligatoires') {
+        return fee.obligatoire;
+      } else if (filter === 'optionnels') {
+        return !fee.obligatoire;
+      }
+      return true;
+    }).length;
+  };
+
+  const formatCurrency = (amount: number) => {
+    return `${amount.toLocaleString()} FCFA`;
+  };
+
+  const getTotalAmount = () => {
     return filteredFees.reduce((sum, fee) => sum + fee.montant, 0);
   };
 
-  return (
-    <SafeAreaView style={commonStyles.container}>
-      <View style={styles.header}>
-        <Text style={commonStyles.title}>Gestion des Frais</Text>
-        <TouchableOpacity 
-          style={styles.addButton}
-          onPress={() => setShowAddModal(true)}
-        >
-          <Icon name="plus" size={24} color={colors.surface} />
-        </TouchableOpacity>
-      </View>
+  const availableClasses = [...new Set(fees.map(f => f.classe).filter(Boolean))] as string[];
 
-      <View style={styles.searchContainer}>
+  return (
+    <SafeAreaView style={commonStyles.wrapper}>
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <Text style={styles.title}>Frais de scolarité</Text>
+          <View style={styles.headerActions}>
+            {selectionMode && (
+              <>
+                <TouchableOpacity onPress={selectAllFees} style={styles.headerButton}>
+                  <Icon 
+                    name={selectedFees.length === filteredFees.length ? "checkbox" : "square-outline"} 
+                    size={24} 
+                    color={colors.primary} 
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowBulkModal(true)} style={styles.headerButton}>
+                  <Icon name="options" size={24} color={colors.primary} />
+                </TouchableOpacity>
+              </>
+            )}
+            <TouchableOpacity onPress={toggleSelectionMode} style={styles.headerButton}>
+              <Icon name={selectionMode ? "close" : "checkmark-circle"} size={24} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowFilterModal(true)} style={styles.headerButton}>
+              <Icon name="filter" size={24} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowBottomSheet(true)} style={styles.headerButton}>
+              <Icon name="ellipsis-vertical" size={24} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <SearchBar
           value={searchQuery}
           onChangeText={setSearchQuery}
           placeholder="Rechercher par code, description..."
         />
-        <TouchableOpacity 
-          style={styles.filterButton}
-          onPress={() => setShowFilterSheet(true)}
-        >
-          <Icon name="filter" size={20} color={colors.primary} />
-        </TouchableOpacity>
-      </View>
 
-      <View style={styles.statsContainer}>
-        <View style={styles.statItem}>
-          <Text style={styles.statValue}>{filteredFees.length}</Text>
-          <Text style={styles.statLabel}>Frais</Text>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>Total des frais</Text>
+          <Text style={styles.summaryAmount}>{formatCurrency(getTotalAmount())}</Text>
+          <Text style={styles.summaryCount}>{filteredFees.length} frais</Text>
         </View>
-        <View style={styles.statItem}>
-          <Text style={styles.statValue}>{formatCurrency(getTotalAmount())}</Text>
-          <Text style={styles.statLabel}>Total</Text>
-        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterTabs}>
+          {(['tous', 'obligatoires', 'optionnels'] as const).map((filter) => (
+            <TouchableOpacity
+              key={filter}
+              style={[
+                styles.filterTab,
+                selectedFilter === filter && styles.activeFilterTab
+              ]}
+              onPress={() => setSelectedFilter(filter)}
+            >
+              <Text style={[
+                styles.filterTabText,
+                selectedFilter === filter && styles.activeFilterTabText
+              ]}>
+                {filter === 'tous' ? 'Tous' : filter === 'obligatoires' ? 'Obligatoires' : 'Optionnels'} ({getFilterCount(filter)})
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
       <ScrollView
@@ -169,76 +307,130 @@ const FeesScreen: React.FC = () => {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        showsVerticalScrollIndicator={false}
       >
         {filteredFees.map((fee) => (
-          <FeeCard
+          <TouchableOpacity
             key={fee.code}
-            fee={fee}
-            onEdit={() => {
-              setEditingFee(fee);
-              setShowAddModal(true);
+            onPress={() => {
+              if (selectionMode) {
+                toggleFeeSelection(fee.code);
+              }
             }}
-            onDelete={() => handleDeleteFee(fee)}
-          />
+            onLongPress={() => {
+              if (!selectionMode) {
+                setSelectionMode(true);
+                setSelectedFees([fee.code]);
+              }
+            }}
+          >
+            <View style={[
+              styles.feeCardContainer,
+              selectionMode && selectedFees.includes(fee.code) && styles.selectedCard
+            ]}>
+              {selectionMode && (
+                <View style={styles.selectionIndicator}>
+                  <Icon 
+                    name={selectedFees.includes(fee.code) ? "checkmark-circle" : "ellipse-outline"} 
+                    size={24} 
+                    color={selectedFees.includes(fee.code) ? colors.success : colors.grey} 
+                  />
+                </View>
+              )}
+              <FeeCard
+                fee={fee}
+                onEdit={!selectionMode && user?.role === 'admin' ? () => {
+                  setEditingFee(fee);
+                  setShowAddModal(true);
+                } : undefined}
+                onDelete={!selectionMode && user?.role === 'admin' ? () => handleDeleteFee(fee) : undefined}
+              />
+            </View>
+          </TouchableOpacity>
         ))}
 
         {filteredFees.length === 0 && (
           <View style={styles.emptyState}>
-            <Icon name="dollar-sign" size={48} color={colors.textSecondary} />
-            <Text style={styles.emptyStateText}>
-              {searchQuery ? 'Aucun frais trouvé' : 'Aucun frais enregistré'}
-            </Text>
+            <Icon name="receipt" size={64} color={colors.grey} />
+            <Text style={styles.emptyStateText}>Aucun frais trouvé</Text>
             <Text style={styles.emptyStateSubtext}>
-              {searchQuery ? 'Essayez une autre recherche' : 'Commencez par ajouter un frais'}
+              {searchQuery ? 'Essayez de modifier votre recherche' : 'Commencez par ajouter des frais'}
             </Text>
           </View>
         )}
       </ScrollView>
 
+      {!selectionMode && user?.role === 'admin' && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => setShowAddModal(true)}
+        >
+          <Icon name="add" size={24} color="white" />
+        </TouchableOpacity>
+      )}
+
       <AddFeeModal
         visible={showAddModal}
         onClose={() => {
           setShowAddModal(false);
-          setEditingFee(undefined);
+          setEditingFee(null);
         }}
         onSave={editingFee ? handleUpdateFee : handleAddFee}
-        fee={editingFee}
+        fee={editingFee || undefined}
         isEditing={!!editingFee}
       />
 
-      <SimpleBottomSheet
-        isVisible={showFilterSheet}
-        onClose={() => setShowFilterSheet(false)}
-      >
-        <View style={styles.filterSheet}>
-          <Text style={styles.filterTitle}>Filtrer par type</Text>
+      <FilterModal
+        visible={showFilterModal}
+        onClose={() => setShowFilterModal(false)}
+        onApply={applyFilters}
+        currentFilters={currentFilters}
+        availableClasses={availableClasses}
+        type="fees"
+      />
+
+      <BulkActionModal
+        visible={showBulkModal}
+        onClose={() => setShowBulkModal(false)}
+        selectedItems={selectedFees}
+        onBulkDelete={handleBulkDelete}
+        onBulkExport={handleBulkExport}
+        itemType="fees"
+      />
+
+      <SimpleBottomSheet isVisible={showBottomSheet} onClose={() => setShowBottomSheet(false)}>
+        <View style={styles.bottomSheetContent}>
+          <Text style={styles.bottomSheetTitle}>Actions</Text>
           
-          {(['tous', 'obligatoires', 'optionnels'] as const).map((filter) => (
-            <TouchableOpacity
-              key={filter}
-              style={[
-                styles.filterOption,
-                selectedFilter === filter && styles.filterOptionSelected
-              ]}
+          {user?.role === 'admin' && (
+            <ActionButton
+              title="Ajouter un frais"
+              icon="add-circle"
               onPress={() => {
-                setSelectedFilter(filter);
-                setShowFilterSheet(false);
+                setShowBottomSheet(false);
+                setShowAddModal(true);
               }}
-            >
-              <Text style={[
-                styles.filterOptionText,
-                selectedFilter === filter && styles.filterOptionTextSelected
-              ]}>
-                {filter === 'tous' ? 'Tous les frais' :
-                 filter === 'obligatoires' ? 'Frais obligatoires' :
-                 'Frais optionnels'}
-              </Text>
-              <Text style={styles.filterCount}>
-                {getFilterCount(filter)}
-              </Text>
-            </TouchableOpacity>
-          ))}
+              style={styles.bottomSheetButton}
+            />
+          )}
+
+          <ActionButton
+            title="Exporter les frais"
+            icon="download"
+            variant="secondary"
+            onPress={handleExportFees}
+            style={styles.bottomSheetButton}
+          />
+
+          <ActionButton
+            title="Imprimer la liste"
+            icon="print"
+            variant="secondary"
+            onPress={() => {
+              setShowBottomSheet(false);
+              Alert.alert('Info', 'Fonctionnalité d\'impression à venir');
+            }}
+            style={styles.bottomSheetButton}
+          />
         </View>
       </SimpleBottomSheet>
     </SafeAreaView>
@@ -247,108 +439,139 @@ const FeesScreen: React.FC = () => {
 
 const styles = StyleSheet.create({
   header: {
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    marginBottom: 16,
   },
-  addButton: {
-    backgroundColor: colors.primary,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    alignItems: 'center',
-  },
-  filterButton: {
-    marginLeft: 12,
-    padding: 8,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-  },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 18,
-    fontWeight: '600',
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
     color: colors.text,
   },
-  statLabel: {
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  summaryCard: {
+    backgroundColor: colors.success + '20',
+    padding: 16,
+    borderRadius: 12,
+    marginVertical: 12,
+    alignItems: 'center',
+  },
+  summaryTitle: {
+    fontSize: 14,
+    color: colors.text,
+    marginBottom: 4,
+  },
+  summaryAmount: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: colors.success,
+    marginBottom: 4,
+  },
+  summaryCount: {
     fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
+    color: colors.grey,
+  },
+  filterTabs: {
+    marginTop: 12,
+  },
+  filterTab: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginRight: 8,
+    borderRadius: 20,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.grey + '30',
+  },
+  activeFilterTab: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterTabText: {
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  activeFilterTabText: {
+    color: 'white',
   },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
+    padding: 16,
+  },
+  feeCardContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  selectedCard: {
+    backgroundColor: colors.primary + '20',
+  },
+  selectionIndicator: {
+    padding: 12,
   },
   emptyState: {
-    alignItems: 'center',
+    flex: 1,
     justifyContent: 'center',
+    alignItems: 'center',
     paddingVertical: 60,
   },
   emptyStateText: {
     fontSize: 18,
-    fontWeight: '500',
+    fontWeight: '600',
     color: colors.text,
     marginTop: 16,
+    marginBottom: 8,
   },
   emptyStateSubtext: {
     fontSize: 14,
-    color: colors.textSecondary,
-    marginTop: 8,
+    color: colors.grey,
     textAlign: 'center',
   },
-  filterSheet: {
+  fab: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  bottomSheetContent: {
     padding: 20,
   },
-  filterTitle: {
-    fontSize: 18,
+  bottomSheetTitle: {
+    fontSize: 20,
     fontWeight: '600',
     color: colors.text,
     marginBottom: 20,
-  },
-  filterOption: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  filterOptionSelected: {
-    backgroundColor: colors.primary,
-  },
-  filterOptionText: {
-    fontSize: 16,
-    color: colors.text,
-  },
-  filterOptionTextSelected: {
-    color: colors.surface,
-    fontWeight: '500',
-  },
-  filterCount: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    backgroundColor: colors.border,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-    minWidth: 24,
     textAlign: 'center',
+  },
+  bottomSheetButton: {
+    marginBottom: 12,
   },
 });
 
