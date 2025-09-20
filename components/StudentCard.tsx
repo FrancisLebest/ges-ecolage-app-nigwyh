@@ -1,9 +1,10 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Student } from '../types';
-import { colors } from '../styles/commonStyles';
+import { router } from 'expo-router';
 import Icon from './Icon';
+import { colors } from '../styles/commonStyles';
+import { Student } from '../types';
 
 interface StudentCardProps {
   student: Student;
@@ -23,66 +24,85 @@ const StudentCard: React.FC<StudentCardProps> = ({
   showBalance = false, 
   balance 
 }) => {
-  const formatCurrency = (amount: number) => {
-    return `${amount.toLocaleString()} FCFA`;
+  const formatCurrency = (amount: number): string => {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: 'XOF',
+      minimumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  const handlePress = () => {
+    if (onPress) {
+      onPress();
+    } else {
+      router.push(`/student/${student.matricule}`);
+    }
+  };
+
+  const getStatusColor = () => {
+    if (!balance) return colors.textSecondary;
+    return balance.statut === 'solde' ? colors.success : colors.error;
+  };
+
+  const getStatusText = () => {
+    if (!balance) return student.statut;
+    return balance.statut === 'solde' ? 'Soldé' : 'Non soldé';
   };
 
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress}>
+    <TouchableOpacity style={styles.card} onPress={handlePress}>
       <View style={styles.header}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>
+            {student.nom.charAt(0)}{student.prenom.charAt(0)}
+          </Text>
+        </View>
         <View style={styles.studentInfo}>
           <Text style={styles.name}>
-            {student.prenom} {student.nom}
+            {student.nom} {student.prenom}
           </Text>
-          <Text style={styles.matricule}>
-            {student.matricule}
-          </Text>
+          <Text style={styles.matricule}>{student.matricule}</Text>
+          <View style={styles.details}>
+            <View style={styles.detailItem}>
+              <Icon name="users" size={14} color={colors.textSecondary} />
+              <Text style={styles.detailText}>{student.classe}</Text>
+            </View>
+            <View style={styles.detailItem}>
+              <Icon name="phone" size={14} color={colors.textSecondary} />
+              <Text style={styles.detailText}>{student.contactParent}</Text>
+            </View>
+          </View>
         </View>
         <View style={styles.statusContainer}>
-          <Text style={styles.classe}>{student.classe}</Text>
-          {showBalance && balance && (
-            <View style={[
-              styles.statusBadge,
-              { backgroundColor: balance.statut === 'solde' ? '#4CAF50' : '#FF5722' }
-            ]}>
-              <Text style={styles.statusText}>
-                {balance.statut === 'solde' ? 'Soldé' : 'Non soldé'}
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
-      
-      <View style={styles.details}>
-        <View style={styles.detailRow}>
-          <Icon name="call" size={16} color={colors.grey} />
-          <Text style={styles.detailText}>{student.contactParent}</Text>
-        </View>
-        <View style={styles.detailRow}>
-          <Icon name="calendar" size={16} color={colors.grey} />
-          <Text style={styles.detailText}>
-            Né(e) le {new Date(student.dateNaissance).toLocaleDateString('fr-FR')}
-          </Text>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor() + '20' }]}>
+            <Text style={[styles.statusText, { color: getStatusColor() }]}>
+              {getStatusText()}
+            </Text>
+          </View>
+          <Icon name="chevron-right" size={16} color={colors.textSecondary} />
         </View>
       </View>
 
       {showBalance && balance && (
         <View style={styles.balanceSection}>
-          <View style={styles.balanceRow}>
-            <Text style={styles.balanceLabel}>Total dû:</Text>
-            <Text style={styles.balanceAmount}>{formatCurrency(balance.totalDu)}</Text>
+          <View style={styles.balanceItem}>
+            <Text style={styles.balanceLabel}>Total dû</Text>
+            <Text style={styles.balanceValue}>
+              {formatCurrency(balance.totalDu)}
+            </Text>
           </View>
-          <View style={styles.balanceRow}>
-            <Text style={styles.balanceLabel}>Payé:</Text>
-            <Text style={[styles.balanceAmount, { color: '#4CAF50' }]}>
+          <View style={styles.balanceItem}>
+            <Text style={styles.balanceLabel}>Payé</Text>
+            <Text style={[styles.balanceValue, { color: colors.success }]}>
               {formatCurrency(balance.totalPaye)}
             </Text>
           </View>
-          <View style={styles.balanceRow}>
-            <Text style={styles.balanceLabel}>Reste:</Text>
+          <View style={styles.balanceItem}>
+            <Text style={styles.balanceLabel}>Reste</Text>
             <Text style={[
-              styles.balanceAmount, 
-              { color: balance.resteAPayer > 0 ? '#FF5722' : '#4CAF50' }
+              styles.balanceValue, 
+              { color: balance.resteAPayer > 0 ? colors.error : colors.success }
             ]}>
               {formatCurrency(balance.resteAPayer)}
             </Text>
@@ -95,86 +115,96 @@ const StudentCard: React.FC<StudentCardProps> = ({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.backgroundAlt,
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
-    marginVertical: 6,
-    marginHorizontal: 16,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: colors.grey + '20',
-    boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.1)',
+    borderColor: colors.border,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
     elevation: 3,
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
+    alignItems: 'center',
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.surface,
   },
   studentInfo: {
     flex: 1,
   },
   name: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: colors.text,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   matricule: {
     fontSize: 14,
-    color: colors.grey,
-    fontWeight: '500',
+    color: colors.primary,
+    marginBottom: 4,
+  },
+  details: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  detailItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 16,
+    marginBottom: 2,
+  },
+  detailText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginLeft: 4,
   },
   statusContainer: {
     alignItems: 'flex-end',
-  },
-  classe: {
-    fontSize: 14,
-    color: colors.accent,
-    fontWeight: '600',
-    marginBottom: 6,
   },
   statusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
+    marginBottom: 8,
   },
   statusText: {
     fontSize: 12,
-    color: 'white',
-    fontWeight: '600',
-  },
-  details: {
-    marginBottom: 8,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  detailText: {
-    fontSize: 14,
-    color: colors.text,
-    marginLeft: 8,
+    fontWeight: '500',
   },
   balanceSection: {
-    borderTopWidth: 1,
-    borderTopColor: colors.grey + '30',
-    paddingTop: 12,
-    marginTop: 8,
-  },
-  balanceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  balanceItem: {
     alignItems: 'center',
-    marginBottom: 4,
   },
   balanceLabel: {
-    fontSize: 14,
-    color: colors.grey,
+    fontSize: 10,
+    color: colors.textSecondary,
+    marginBottom: 2,
   },
-  balanceAmount: {
-    fontSize: 14,
+  balanceValue: {
+    fontSize: 12,
     fontWeight: '600',
     color: colors.text,
   },

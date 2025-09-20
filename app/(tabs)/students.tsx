@@ -1,205 +1,332 @@
 
 import React, { useState, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
   TouchableOpacity,
-  RefreshControl 
+  RefreshControl,
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, commonStyles } from '../../styles/commonStyles';
-import { useStudents } from '../../hooks/useStudents';
-import { usePayments } from '../../hooks/usePayments';
-import StudentCard from '../../components/StudentCard';
-import SearchBar from '../../components/SearchBar';
 import Icon from '../../components/Icon';
+import SearchBar from '../../components/SearchBar';
+import StudentCard from '../../components/StudentCard';
+import AddStudentModal from '../../components/AddStudentModal';
 import SimpleBottomSheet from '../../components/BottomSheet';
+import { useSupabaseStudents } from '../../hooks/useSupabaseStudents';
+import { useSupabasePayments } from '../../hooks/useSupabasePayments';
+import { Student } from '../../types';
 
-export default function StudentsScreen() {
-  const { students, loading, searchStudents } = useStudents();
-  const { getStudentBalances } = usePayments();
+const StudentsScreen: React.FC = () => {
+  const { 
+    students, 
+    loading, 
+    addStudent, 
+    updateStudent, 
+    deleteStudent, 
+    searchStudents, 
+    refreshStudents,
+    importStudentsFromFile,
+    exportStudentsToExcel
+  } = useSupabaseStudents();
+  
+  const { getStudentBalances } = useSupabasePayments();
+  
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredStudents, setFilteredStudents] = useState(students);
+  const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showFilterSheet, setShowFilterSheet] = useState(false);
+  const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<'tous' | 'soldes' | 'non_soldes'>('tous');
-
-  const balances = getStudentBalances();
+  const [editingStudent, setEditingStudent] = useState<Student | undefined>(undefined);
+  const [balances, setBalances] = useState<any[]>([]);
 
   useEffect(() => {
-    let filtered = searchStudents(searchQuery);
-    
-    if (selectedFilter !== 'tous') {
-      const balanceMap = new Map(balances.map(b => [b.matricule, b]));
-      filtered = filtered.filter(student => {
-        const balance = balanceMap.get(student.matricule);
-        if (!balance) return false;
-        return selectedFilter === 'soldes' ? balance.statut === 'solde' : balance.statut === 'non_solde';
-      });
-    }
-    
-    setFilteredStudents(filtered);
+    const studentBalances = getStudentBalances();
+    setBalances(studentBalances);
+  }, [students]);
+
+  useEffect(() => {
+    filterStudents();
   }, [searchQuery, students, selectedFilter, balances]);
+
+  const filterStudents = () => {
+    let filtered = searchStudents(searchQuery);
+
+    // Filter by payment status
+    if (selectedFilter === 'soldes') {
+      const soldeMatricules = balances
+        .filter(b => b.statut === 'solde')
+        .map(b => b.matricule);
+      filtered = filtered.filter(s => soldeMatricules.includes(s.matricule));
+    } else if (selectedFilter === 'non_soldes') {
+      const nonSoldeMatricules = balances
+        .filter(b => b.statut === 'non_solde')
+        .map(b => b.matricule);
+      filtered = filtered.filter(s => nonSoldeMatricules.includes(s.matricule));
+    }
+
+    setFilteredStudents(filtered);
+  };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
+    await refreshStudents();
+    setRefreshing(false);
+  };
+
+  const handleAddStudent = async (student: Student) => {
+    try {
+      await addStudent(student);
+      Alert.alert('Succès', 'Élève ajouté avec succès');
+    } catch (error) {
+      Alert.alert('Erreur', 'Erreur lors de l\'ajout de l\'élève');
+    }
+  };
+
+  const handleUpdateStudent = async (student: Student) => {
+    try {
+      if (editingStudent) {
+        await updateStudent(editingStudent.matricule, student);
+        Alert.alert('Succès', 'Élève modifié avec succès');
+        setEditingStudent(undefined);
+      }
+    } catch (error) {
+      Alert.alert('Erreur', 'Erreur lors de la modification de l\'élève');
+    }
+  };
+
+  const handleDeleteStudent = (student: Student) => {
+    Alert.alert(
+      'Confirmer la suppression',
+      `Êtes-vous sûr de vouloir supprimer l'élève ${student.nom} ${student.prenom} ?`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteStudent(student.matricule);
+              Alert.alert('Succès', 'Élève supprimé avec succès');
+            } catch (error) {
+              Alert.alert('Erreur', 'Erreur lors de la suppression de l\'élève');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleImportStudents = async () => {
+    try {
+      const result = await importStudentsFromFile();
+      if (result.success) {
+        Alert.alert('Succès', result.message);
+        if (result.errors && result.errors.length > 0) {
+          Alert.alert('Avertissements', result.errors.join('\n'));
+        }
+      } else {
+        Alert.alert('Erreur', result.message);
+      }
+    } catch (error) {
+      Alert.alert('Erreur', 'Erreur lors de l\'import: ' + error);
+    }
+    setShowActionsSheet(false);
+  };
+
+  const handleExportStudents = async () => {
+    try {
+      const result = await exportStudentsToExcel(filteredStudents);
+      if (result.success) {
+        Alert.alert('Succès', 'Export réalisé avec succès');
+        // Note: In a real app, you would save the file or share it
+        console.log('Export data:', result.data);
+      } else {
+        Alert.alert('Erreur', result.message);
+      }
+    } catch (error) {
+      Alert.alert('Erreur', 'Erreur lors de l\'export: ' + error);
+    }
+    setShowActionsSheet(false);
   };
 
   const getStudentBalance = (matricule: string) => {
     return balances.find(b => b.matricule === matricule);
   };
 
-  const getFilterCount = (filter: 'tous' | 'soldes' | 'non_soldes') => {
+  const getFilterCount = (filter: 'tous' | 'soldes' | 'non_soldes'): number => {
     switch (filter) {
-      case 'tous':
-        return students.length;
       case 'soldes':
         return balances.filter(b => b.statut === 'solde').length;
       case 'non_soldes':
         return balances.filter(b => b.statut === 'non_solde').length;
       default:
-        return 0;
+        return students.length;
     }
   };
 
   return (
-    <SafeAreaView style={commonStyles.wrapper}>
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.title}>Gestion des Élèves</Text>
-          <View style={styles.headerActions}>
-            <TouchableOpacity 
-              style={styles.filterButton}
-              onPress={() => setShowFilters(true)}
-            >
-              <Icon name="filter" size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.addButton}>
-              <Icon name="add" size={20} color="white" />
-            </TouchableOpacity>
-          </View>
+    <SafeAreaView style={commonStyles.container}>
+      <View style={styles.header}>
+        <Text style={commonStyles.title}>Gestion des Élèves</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => setShowActionsSheet(true)}
+          >
+            <Icon name="more-horizontal" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.addButton}
+            onPress={() => setShowAddModal(true)}
+          >
+            <Icon name="plus" size={24} color={colors.surface} />
+          </TouchableOpacity>
         </View>
+      </View>
 
-        {/* Search Bar */}
+      <View style={styles.searchContainer}>
         <SearchBar
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholder="Rechercher par matricule, nom ou téléphone..."
-          onClear={() => setSearchQuery('')}
+          placeholder="Rechercher par matricule, nom..."
         />
+        <TouchableOpacity 
+          style={styles.filterButton}
+          onPress={() => setShowFilterSheet(true)}
+        >
+          <Icon name="filter" size={20} color={colors.primary} />
+        </TouchableOpacity>
+      </View>
 
-        {/* Filter Indicator */}
-        {selectedFilter !== 'tous' && (
-          <View style={styles.filterIndicator}>
-            <Text style={styles.filterText}>
-              Filtre: {selectedFilter === 'soldes' ? 'Élèves soldés' : 'Élèves non soldés'}
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{filteredStudents.length}</Text>
+          <Text style={styles.statLabel}>Élèves</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{getFilterCount('soldes')}</Text>
+          <Text style={styles.statLabel}>Soldés</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{getFilterCount('non_soldes')}</Text>
+          <Text style={styles.statLabel}>Non soldés</Text>
+        </View>
+      </View>
+
+      <ScrollView
+        style={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        {filteredStudents.map((student) => (
+          <StudentCard
+            key={student.matricule}
+            student={student}
+            showBalance={true}
+            balance={getStudentBalance(student.matricule)}
+            onPress={() => {
+              setEditingStudent(student);
+              setShowAddModal(true);
+            }}
+          />
+        ))}
+
+        {filteredStudents.length === 0 && (
+          <View style={styles.emptyState}>
+            <Icon name="users" size={48} color={colors.textSecondary} />
+            <Text style={styles.emptyStateText}>
+              {searchQuery ? 'Aucun élève trouvé' : 'Aucun élève enregistré'}
             </Text>
-            <TouchableOpacity onPress={() => setSelectedFilter('tous')}>
-              <Icon name="close" size={16} color={colors.accent} />
-            </TouchableOpacity>
+            <Text style={styles.emptyStateSubtext}>
+              {searchQuery ? 'Essayez une autre recherche' : 'Commencez par ajouter un élève'}
+            </Text>
           </View>
         )}
+      </ScrollView>
 
-        {/* Students List */}
-        <ScrollView
-          style={styles.studentsList}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-        >
-          {filteredStudents.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Icon name="people" size={64} color={colors.grey} />
-              <Text style={styles.emptyText}>
-                {searchQuery ? 'Aucun élève trouvé' : 'Aucun élève enregistré'}
-              </Text>
-            </View>
-          ) : (
-            filteredStudents.map((student) => (
-              <StudentCard
-                key={student.matricule}
-                student={student}
-                showBalance={true}
-                balance={getStudentBalance(student.matricule)}
-                onPress={() => console.log('Student pressed:', student.matricule)}
-              />
-            ))
-          )}
-        </ScrollView>
+      <AddStudentModal
+        visible={showAddModal}
+        onClose={() => {
+          setShowAddModal(false);
+          setEditingStudent(undefined);
+        }}
+        onSave={editingStudent ? handleUpdateStudent : handleAddStudent}
+        student={editingStudent}
+        isEditing={!!editingStudent}
+      />
 
-        {/* Filter Bottom Sheet */}
-        <SimpleBottomSheet
-          isVisible={showFilters}
-          onClose={() => setShowFilters(false)}
-        >
-          <View style={styles.filterSheet}>
-            <Text style={styles.filterSheetTitle}>Filtrer les élèves</Text>
-            
+      <SimpleBottomSheet
+        isVisible={showFilterSheet}
+        onClose={() => setShowFilterSheet(false)}
+      >
+        <View style={styles.filterSheet}>
+          <Text style={styles.filterTitle}>Filtrer par statut</Text>
+          
+          {(['tous', 'soldes', 'non_soldes'] as const).map((filter) => (
             <TouchableOpacity
+              key={filter}
               style={[
                 styles.filterOption,
-                selectedFilter === 'tous' && styles.filterOptionActive
+                selectedFilter === filter && styles.filterOptionSelected
               ]}
               onPress={() => {
-                setSelectedFilter('tous');
-                setShowFilters(false);
+                setSelectedFilter(filter);
+                setShowFilterSheet(false);
               }}
             >
-              <Icon name="people" size={20} color={colors.text} />
-              <Text style={styles.filterOptionText}>
-                Tous les élèves ({getFilterCount('tous')})
+              <Text style={[
+                styles.filterOptionText,
+                selectedFilter === filter && styles.filterOptionTextSelected
+              ]}>
+                {filter === 'tous' ? 'Tous les élèves' :
+                 filter === 'soldes' ? 'Élèves soldés' :
+                 'Élèves non soldés'}
+              </Text>
+              <Text style={styles.filterCount}>
+                {getFilterCount(filter)}
               </Text>
             </TouchableOpacity>
+          ))}
+        </View>
+      </SimpleBottomSheet>
 
-            <TouchableOpacity
-              style={[
-                styles.filterOption,
-                selectedFilter === 'soldes' && styles.filterOptionActive
-              ]}
-              onPress={() => {
-                setSelectedFilter('soldes');
-                setShowFilters(false);
-              }}
-            >
-              <Icon name="checkmark-circle" size={20} color="#4CAF50" />
-              <Text style={styles.filterOptionText}>
-                Élèves soldés ({getFilterCount('soldes')})
-              </Text>
-            </TouchableOpacity>
+      <SimpleBottomSheet
+        isVisible={showActionsSheet}
+        onClose={() => setShowActionsSheet(false)}
+      >
+        <View style={styles.actionsSheet}>
+          <Text style={styles.actionsTitle}>Actions</Text>
+          
+          <TouchableOpacity
+            style={styles.actionOption}
+            onPress={handleImportStudents}
+          >
+            <Icon name="upload" size={20} color={colors.primary} />
+            <Text style={styles.actionOptionText}>Importer depuis Excel/CSV</Text>
+          </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[
-                styles.filterOption,
-                selectedFilter === 'non_soldes' && styles.filterOptionActive
-              ]}
-              onPress={() => {
-                setSelectedFilter('non_soldes');
-                setShowFilters(false);
-              }}
-            >
-              <Icon name="alert-circle" size={20} color="#FF5722" />
-              <Text style={styles.filterOptionText}>
-                Élèves non soldés ({getFilterCount('non_soldes')})
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </SimpleBottomSheet>
-      </View>
+          <TouchableOpacity
+            style={styles.actionOption}
+            onPress={handleExportStudents}
+          >
+            <Icon name="download" size={20} color={colors.success} />
+            <Text style={styles.actionOptionText}>Exporter vers Excel</Text>
+          </TouchableOpacity>
+        </View>
+      </SimpleBottomSheet>
     </SafeAreaView>
   );
-}
+};
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -207,88 +334,133 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: colors.text,
-  },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  filterButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.backgroundAlt,
-    justifyContent: 'center',
-    alignItems: 'center',
+  actionButton: {
     marginRight: 12,
+    padding: 8,
   },
   addButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.primary,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  filterIndicator: {
+  searchContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 16,
     alignItems: 'center',
-    backgroundColor: colors.accent + '20',
-    marginHorizontal: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginBottom: 8,
   },
-  filterText: {
-    fontSize: 14,
-    color: colors.accent,
-    fontWeight: '500',
+  filterButton: {
+    marginLeft: 12,
+    padding: 8,
   },
-  studentsList: {
+  statsContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
+  statItem: {
     flex: 1,
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 20,
   },
   emptyState: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 60,
   },
-  emptyText: {
-    fontSize: 16,
-    color: colors.grey,
+  emptyStateText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: colors.text,
     marginTop: 16,
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginTop: 8,
     textAlign: 'center',
   },
   filterSheet: {
     padding: 20,
   },
-  filterSheetTitle: {
+  filterTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: colors.text,
     marginBottom: 20,
-    textAlign: 'center',
   },
   filterOption: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 16,
     paddingHorizontal: 16,
-    borderRadius: 12,
+    borderRadius: 8,
     marginBottom: 8,
   },
-  filterOptionActive: {
-    backgroundColor: colors.accent + '20',
+  filterOptionSelected: {
+    backgroundColor: colors.primary,
   },
   filterOptionText: {
     fontSize: 16,
     color: colors.text,
+  },
+  filterOptionTextSelected: {
+    color: colors.surface,
+    fontWeight: '500',
+  },
+  filterCount: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    backgroundColor: colors.border,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+    minWidth: 24,
+    textAlign: 'center',
+  },
+  actionsSheet: {
+    padding: 20,
+  },
+  actionsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 20,
+  },
+  actionOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  actionOptionText: {
+    fontSize: 16,
+    color: colors.text,
     marginLeft: 12,
-    flex: 1,
   },
 });
+
+export default StudentsScreen;

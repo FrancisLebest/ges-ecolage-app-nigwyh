@@ -13,71 +13,106 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, commonStyles } from '../../styles/commonStyles';
 import Icon from '../../components/Icon';
 import SearchBar from '../../components/SearchBar';
-import PaymentCard from '../../components/PaymentCard';
-import AddPaymentModal from '../../components/AddPaymentModal';
+import FeeCard from '../../components/FeeCard';
+import AddFeeModal from '../../components/AddFeeModal';
 import SimpleBottomSheet from '../../components/BottomSheet';
-import { useSupabasePayments } from '../../hooks/useSupabasePayments';
-import { Payment } from '../../types';
+import { useSupabaseFees, Fee } from '../../hooks/useSupabaseFees';
 
-const PaymentsScreen: React.FC = () => {
-  const { 
-    payments, 
-    loading, 
-    addPayment, 
-    refreshPayments,
-    getPaymentsByMode
-  } = useSupabasePayments();
-  
+const FeesScreen: React.FC = () => {
+  const { fees, loading, addFee, updateFee, deleteFee, refreshFees } = useSupabaseFees();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredPayments, setFilteredPayments] = useState<Payment[]>([]);
+  const [filteredFees, setFilteredFees] = useState<Fee[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
-  const [selectedMode, setSelectedMode] = useState<string>('tous');
+  const [selectedFilter, setSelectedFilter] = useState<'tous' | 'obligatoires' | 'optionnels'>('tous');
+  const [editingFee, setEditingFee] = useState<Fee | undefined>(undefined);
 
   useEffect(() => {
-    filterPayments();
-  }, [searchQuery, payments, selectedMode]);
+    filterFees();
+  }, [searchQuery, fees, selectedFilter]);
 
-  const filterPayments = () => {
-    let filtered = payments;
+  const filterFees = () => {
+    let filtered = fees;
 
     // Filter by search query
     if (searchQuery.trim()) {
       const lowercaseQuery = searchQuery.toLowerCase();
-      filtered = filtered.filter(payment => 
-        payment.matricule.toLowerCase().includes(lowercaseQuery) ||
-        payment.codeFrais.toLowerCase().includes(lowercaseQuery) ||
-        payment.caissier.toLowerCase().includes(lowercaseQuery) ||
-        (payment.numPiece && payment.numPiece.toLowerCase().includes(lowercaseQuery))
+      filtered = filtered.filter(fee => 
+        fee.code.toLowerCase().includes(lowercaseQuery) ||
+        fee.description.toLowerCase().includes(lowercaseQuery) ||
+        (fee.classe && fee.classe.toLowerCase().includes(lowercaseQuery))
       );
     }
 
-    // Filter by payment mode
-    if (selectedMode !== 'tous') {
-      filtered = filtered.filter(payment => payment.mode === selectedMode);
+    // Filter by type
+    if (selectedFilter === 'obligatoires') {
+      filtered = filtered.filter(fee => fee.obligatoire);
+    } else if (selectedFilter === 'optionnels') {
+      filtered = filtered.filter(fee => !fee.obligatoire);
     }
 
-    setFilteredPayments(filtered);
+    setFilteredFees(filtered);
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await refreshPayments();
+    await refreshFees();
     setRefreshing(false);
   };
 
-  const handleAddPayment = async (payment: Payment) => {
+  const handleAddFee = async (fee: Fee) => {
     try {
-      await addPayment(payment);
-      Alert.alert('Succès', 'Paiement enregistré avec succès');
+      await addFee(fee);
+      Alert.alert('Succès', 'Frais ajouté avec succès');
     } catch (error) {
-      Alert.alert('Erreur', 'Erreur lors de l\'enregistrement du paiement');
+      Alert.alert('Erreur', 'Erreur lors de l\'ajout du frais');
     }
   };
 
-  const getTotalAmount = (): number => {
-    return filteredPayments.reduce((sum, payment) => sum + payment.montantPaye, 0);
+  const handleUpdateFee = async (fee: Fee) => {
+    try {
+      if (editingFee) {
+        await updateFee(editingFee.code, fee);
+        Alert.alert('Succès', 'Frais modifié avec succès');
+        setEditingFee(undefined);
+      }
+    } catch (error) {
+      Alert.alert('Erreur', 'Erreur lors de la modification du frais');
+    }
+  };
+
+  const handleDeleteFee = (fee: Fee) => {
+    Alert.alert(
+      'Confirmer la suppression',
+      `Êtes-vous sûr de vouloir supprimer le frais "${fee.description}" ?`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteFee(fee.code);
+              Alert.alert('Succès', 'Frais supprimé avec succès');
+            } catch (error) {
+              Alert.alert('Erreur', 'Erreur lors de la suppression du frais');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const getFilterCount = (filter: 'tous' | 'obligatoires' | 'optionnels'): number => {
+    switch (filter) {
+      case 'obligatoires':
+        return fees.filter(f => f.obligatoire).length;
+      case 'optionnels':
+        return fees.filter(f => !f.obligatoire).length;
+      default:
+        return fees.length;
+    }
   };
 
   const formatCurrency = (amount: number): string => {
@@ -88,23 +123,14 @@ const PaymentsScreen: React.FC = () => {
     }).format(amount);
   };
 
-  const getModeCount = (mode: string): number => {
-    if (mode === 'tous') return payments.length;
-    return payments.filter(p => p.mode === mode).length;
+  const getTotalAmount = (): number => {
+    return filteredFees.reduce((sum, fee) => sum + fee.montant, 0);
   };
-
-  const paymentModes = [
-    { key: 'tous', label: 'Tous les modes' },
-    { key: 'especes', label: 'Espèces' },
-    { key: 'cheque', label: 'Chèque' },
-    { key: 'virement', label: 'Virement' },
-    { key: 'mobile', label: 'Mobile Money' }
-  ];
 
   return (
     <SafeAreaView style={commonStyles.container}>
       <View style={styles.header}>
-        <Text style={commonStyles.title}>Gestion des Paiements</Text>
+        <Text style={commonStyles.title}>Gestion des Frais</Text>
         <TouchableOpacity 
           style={styles.addButton}
           onPress={() => setShowAddModal(true)}
@@ -117,7 +143,7 @@ const PaymentsScreen: React.FC = () => {
         <SearchBar
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholder="Rechercher par matricule, frais..."
+          placeholder="Rechercher par code, description..."
         />
         <TouchableOpacity 
           style={styles.filterButton}
@@ -129,8 +155,8 @@ const PaymentsScreen: React.FC = () => {
 
       <View style={styles.statsContainer}>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{filteredPayments.length}</Text>
-          <Text style={styles.statLabel}>Paiements</Text>
+          <Text style={styles.statValue}>{filteredFees.length}</Text>
+          <Text style={styles.statLabel}>Frais</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={styles.statValue}>{formatCurrency(getTotalAmount())}</Text>
@@ -145,30 +171,40 @@ const PaymentsScreen: React.FC = () => {
         }
         showsVerticalScrollIndicator={false}
       >
-        {filteredPayments.map((payment) => (
-          <PaymentCard
-            key={payment.id}
-            payment={payment}
+        {filteredFees.map((fee) => (
+          <FeeCard
+            key={fee.code}
+            fee={fee}
+            onEdit={() => {
+              setEditingFee(fee);
+              setShowAddModal(true);
+            }}
+            onDelete={() => handleDeleteFee(fee)}
           />
         ))}
 
-        {filteredPayments.length === 0 && (
+        {filteredFees.length === 0 && (
           <View style={styles.emptyState}>
-            <Icon name="credit-card" size={48} color={colors.textSecondary} />
+            <Icon name="dollar-sign" size={48} color={colors.textSecondary} />
             <Text style={styles.emptyStateText}>
-              {searchQuery ? 'Aucun paiement trouvé' : 'Aucun paiement enregistré'}
+              {searchQuery ? 'Aucun frais trouvé' : 'Aucun frais enregistré'}
             </Text>
             <Text style={styles.emptyStateSubtext}>
-              {searchQuery ? 'Essayez une autre recherche' : 'Commencez par enregistrer un paiement'}
+              {searchQuery ? 'Essayez une autre recherche' : 'Commencez par ajouter un frais'}
             </Text>
           </View>
         )}
       </ScrollView>
 
-      <AddPaymentModal
+      <AddFeeModal
         visible={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        onSave={handleAddPayment}
+        onClose={() => {
+          setShowAddModal(false);
+          setEditingFee(undefined);
+        }}
+        onSave={editingFee ? handleUpdateFee : handleAddFee}
+        fee={editingFee}
+        isEditing={!!editingFee}
       />
 
       <SimpleBottomSheet
@@ -176,28 +212,30 @@ const PaymentsScreen: React.FC = () => {
         onClose={() => setShowFilterSheet(false)}
       >
         <View style={styles.filterSheet}>
-          <Text style={styles.filterTitle}>Filtrer par mode de paiement</Text>
+          <Text style={styles.filterTitle}>Filtrer par type</Text>
           
-          {paymentModes.map((mode) => (
+          {(['tous', 'obligatoires', 'optionnels'] as const).map((filter) => (
             <TouchableOpacity
-              key={mode.key}
+              key={filter}
               style={[
                 styles.filterOption,
-                selectedMode === mode.key && styles.filterOptionSelected
+                selectedFilter === filter && styles.filterOptionSelected
               ]}
               onPress={() => {
-                setSelectedMode(mode.key);
+                setSelectedFilter(filter);
                 setShowFilterSheet(false);
               }}
             >
               <Text style={[
                 styles.filterOptionText,
-                selectedMode === mode.key && styles.filterOptionTextSelected
+                selectedFilter === filter && styles.filterOptionTextSelected
               ]}>
-                {mode.label}
+                {filter === 'tous' ? 'Tous les frais' :
+                 filter === 'obligatoires' ? 'Frais obligatoires' :
+                 'Frais optionnels'}
               </Text>
               <Text style={styles.filterCount}>
-                {getModeCount(mode.key)}
+                {getFilterCount(filter)}
               </Text>
             </TouchableOpacity>
           ))}
@@ -314,4 +352,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default PaymentsScreen;
+export default FeesScreen;

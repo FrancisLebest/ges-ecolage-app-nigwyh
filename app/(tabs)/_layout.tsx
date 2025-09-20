@@ -1,37 +1,19 @@
 
 import { Tabs } from 'expo-router';
-import { colors } from '../../styles/commonStyles';
 import Icon from '../../components/Icon';
+import { colors } from '../../styles/commonStyles';
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: colors.accent,
+        tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.text,
         tabBarStyle: {
-          backgroundColor: colors.backgroundAlt,
-          borderTopColor: colors.grey + '30',
-          borderTopWidth: 1,
-          paddingTop: 8,
-          paddingBottom: 8,
-          height: 70,
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
         },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
-          marginTop: 4,
-        },
-        headerStyle: {
-          backgroundColor: colors.background,
-          borderBottomColor: colors.grey + '30',
-          borderBottomWidth: 1,
-        },
-        headerTintColor: colors.text,
-        headerTitleStyle: {
-          fontWeight: '600',
-          fontSize: 18,
-        },
+        headerShown: false,
       }}
     >
       <Tabs.Screen
@@ -39,7 +21,7 @@ export default function TabLayout() {
         options={{
           title: 'Tableau de bord',
           tabBarIcon: ({ color, size }) => (
-            <Icon name="grid" size={size} color={color} />
+            <Icon name="home" size={size} color={color} />
           ),
         }}
       />
@@ -48,7 +30,16 @@ export default function TabLayout() {
         options={{
           title: 'Élèves',
           tabBarIcon: ({ color, size }) => (
-            <Icon name="people" size={size} color={color} />
+            <Icon name="users" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="fees"
+        options={{
+          title: 'Frais',
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="dollar-sign" size={size} color={color} />
           ),
         }}
       />
@@ -57,7 +48,7 @@ export default function TabLayout() {
         options={{
           title: 'Paiements',
           tabBarIcon: ({ color, size }) => (
-            <Icon name="card" size={size} color={color} />
+            <Icon name="credit-card" size={size} color={color} />
           ),
         }}
       />
@@ -75,7 +66,7 @@ export default function TabLayout() {
         options={{
           title: 'Profil',
           tabBarIcon: ({ color, size }) => (
-            <Icon name="person" size={size} color={color} />
+            <Icon name="user" size={size} color={color} />
           ),
         }}
       />
